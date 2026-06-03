@@ -1,0 +1,27 @@
+# Never copy into Docker image
+node_modules
+dist
+.git
+.gitignore
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dev tooling
+.vscode
+.idea
+*.log
+npm-debug.log*
+coverage
+.eslintcache
+.vite
+
+# CI / docs (not needed at runtime)
+.github
+*.md
+Dockerfile
+.dockerignore
+docker-compose*.yml
+nginx.conf

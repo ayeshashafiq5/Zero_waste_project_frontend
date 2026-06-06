@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { supabase } from '../lib/supabase';
 
@@ -37,6 +37,11 @@ export const AuthProvider = ({ children }) => {
   // profileLoading is ONLY set true when we NEED the DB result before rendering
   // (i.e. user_metadata has no role). Background silent enrichment never touches it.
   const [profileLoading, setProfileLoading] = useState(false);
+
+  // Incremented on every signOut. loadProfile checks this before calling setProfile
+  // so any in-flight Phase-2 query started during the previous session is discarded
+  // and cannot overwrite the cleared profile after logout.
+  const sessionGenRef = useRef(0);
 
   // ---------------------------------------------------------------------------
   // tryCreateProfile — upsert a public.users row from auth metadata.
@@ -106,6 +111,12 @@ export const AuthProvider = ({ children }) => {
   // — well under the Login.jsx 12-second safety net.
   // ---------------------------------------------------------------------------
   const loadProfile = useCallback(async (userId, { retries = 0, timeoutMs = 3000, silent = false } = {}) => {
+    // Snapshot the generation at the moment this call starts.
+    // If signOut() fires while we're awaiting the DB, the generation increments
+    // and we discard the result rather than overwriting the cleared profile.
+    const myGen = sessionGenRef.current;
+    const isStale = () => myGen !== sessionGenRef.current;
+
     if (!silent) setProfileLoading(true);
     try {
       for (let attempt = 0; attempt <= retries; attempt++) {
@@ -128,13 +139,15 @@ export const AuthProvider = ({ children }) => {
           error = fetchErr;
         }
 
+        if (isStale()) return null; // signOut fired — discard result
+
         if (error) {
           console.warn(`[auth] profile fetch failed (attempt ${attempt + 1}/${retries + 1}):`, error.message);
           if (attempt === retries) {
             if (!silent) {
               const created = await tryCreateProfile(userId);
-              if (created) { setProfile(created); return created; }
-              setProfile(null);
+              if (!isStale() && created) { setProfile(created); return created; }
+              if (!isStale()) setProfile(null);
             }
             return null;
           }
@@ -145,8 +158,8 @@ export const AuthProvider = ({ children }) => {
           // Row not found
           console.warn(`[auth] no public.users row (attempt ${attempt + 1}/${retries + 1})`);
           if (attempt === retries) {
-            // Try to auto-create whether silent or not — a missing row needs fixing.
             const created = await tryCreateProfile(userId);
+            if (isStale()) return null;
             if (created) { setProfile(created); return created; }
             if (!silent) setProfile(null);
             return null;
@@ -155,10 +168,10 @@ export const AuthProvider = ({ children }) => {
 
         if (attempt < retries) await new Promise((r) => setTimeout(r, 300));
       }
-      if (!silent) setProfile(null);
+      if (!isStale() && !silent) setProfile(null);
       return null;
     } finally {
-      if (!silent) setProfileLoading(false);
+      if (!isStale() && !silent) setProfileLoading(false);
     }
   }, [tryCreateProfile]);
 
@@ -258,10 +271,23 @@ export const AuthProvider = ({ children }) => {
   };
 
   const signOut = async () => {
+    // Increment generation first — any in-flight loadProfile calls are now stale
+    // and will not overwrite the cleared profile.
+    sessionGenRef.current += 1;
+
+    // Race the Supabase API call against a 3-second timeout.
+    // If the network is slow or offline, the timeout wins, the catch runs,
+    // and finally ALWAYS clears the local auth state so the user is signed out
+    // even when the server is unreachable.
     try {
-      await supabase.auth.signOut();
+      await Promise.race([
+        supabase.auth.signOut(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('signOut timed out')), 3000)
+        ),
+      ]);
     } catch (err) {
-      console.warn('[auth] signOut error (ignored):', err.message);
+      console.warn('[auth] signOut error/timeout (ignored):', err.message);
     } finally {
       setProfile(null);
       setSession(null);

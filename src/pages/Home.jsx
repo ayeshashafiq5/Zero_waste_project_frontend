@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, Clock, Menu, Quote, Star, X, Zap } from 'lucide-react';
 import { Logo } from '../components/common/Logo';
 import { Footer } from '../components/common/Footer';
+import { ChatWidget } from '../components/common/ChatWidget';
 import { useAuth } from '../context/AuthContext';
 
 const TESTIMONIALS = [
@@ -63,7 +64,7 @@ export default function Home() {
             </nav>
             <div className="flex items-center gap-2">
               {user ? (
-                <Link to={role === 'ngo' ? '/ngo' : '/restaurant'} className="btn-primary text-sm">
+                <Link to={role === 'ngo' ? '/ngo' : role === 'admin' ? '/admin' : '/restaurant'} className="btn-primary text-sm">
                   Open dashboard <ArrowRight size={16} />
                 </Link>
               ) : (
@@ -305,6 +306,7 @@ export default function Home() {
       </section>
 
       <Footer />
+      <ChatWidget />
     </div>
   );
 }

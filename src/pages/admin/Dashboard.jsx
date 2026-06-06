@@ -2,29 +2,36 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PropTypes from 'prop-types';
 import toast from 'react-hot-toast';
-import { ShieldCheck, X } from 'lucide-react';
+import { ShieldCheck, X, WifiOff } from 'lucide-react';
 import { AppShell } from '../../components/common/AppShell';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ConfirmModal } from '../../components/common/ConfirmModal';
 import { supabase } from '../../lib/supabase';
 import { relativeTime } from '../../utils/formatTime';
+import { useAuth } from '../../context/AuthContext';
 
 // Mockup #16 — Admin Moderation
 // Lists unverified NGOs and lets the admin approve them (sets verified=true).
 // Uses Supabase directly because the admin role bypasses RLS via service-role only on the backend;
 // here we rely on the admin-role policies + our RLS rules.
 export default function AdminDashboard() {
+  const { loading: authLoading, user } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null);
   const [counts, setCounts] = useState({ pending: 0, approvedToday: 0, totalNgos: 0, totalRestaurants: 0 });
 
   const load = async () => {
+    // Do not fetch until auth has resolved — prevents Supabase queries running
+    // without a valid session (which causes infinite loading on slow networks).
+    if (authLoading || !user) return;
     setLoading(true);
+    setLoadError(null);
     try {
-      const [{ data: pending }, { count: ngoCount }, { count: restCount }, { count: approvedTodayCount }] =
+      const [{ data: pending, error: e1 }, { count: ngoCount, error: e2 }, { count: restCount, error: e3 }, { count: approvedTodayCount, error: e4 }] =
         await Promise.all([
           supabase
             .from('users')
@@ -40,6 +47,9 @@ export default function AdminDashboard() {
             .eq('verified', true)
             .gte('updated_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
         ]);
+      // Surface the first Supabase error as a banner (not just a toast)
+      const firstErr = e1 || e2 || e3 || e4;
+      if (firstErr) throw firstErr;
       setUsers(pending || []);
       setCounts({
         pending: (pending || []).length,
@@ -48,13 +58,16 @@ export default function AdminDashboard() {
         totalRestaurants: restCount || 0,
       });
     } catch (e) {
-      toast.error(e.message);
+      const msg = e.message || 'Could not load admin data';
+      console.error('[AdminDashboard] load error:', msg);
+      setLoadError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [authLoading, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const approve = async (id) => {
     setBusyId(id);
@@ -95,8 +108,30 @@ export default function AdminDashboard() {
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Moderation Queue</h1>
           <p className="text-sm text-gray-500 mt-1">Review and approve new NGO accounts.</p>
         </div>
-        <Link to="/admin/analytics" className="btn-secondary">View analytics →</Link>
+        <div className="flex items-center gap-2">
+          <button onClick={load} disabled={loading} className="btn-secondary text-xs" title="Refresh">
+            Refresh
+          </button>
+          <Link to="/admin/analytics" className="btn-secondary">View analytics →</Link>
+        </div>
       </div>
+
+      {/* Error banner — shown when Supabase or network fails */}
+      {loadError && (
+        <div className="mt-4 flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+          <WifiOff size={18} className="shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold">Could not load admin data.</span>
+            <span className="ml-1">{loadError}</span>
+            <button
+              onClick={() => { setLoadError(null); load(); }}
+              className="ml-2 underline font-medium hover:no-underline"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
         <Stat label="Pending review" value={counts.pending} tone="yellow" />

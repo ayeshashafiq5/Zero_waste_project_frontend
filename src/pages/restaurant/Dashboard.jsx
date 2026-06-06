@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PropTypes from 'prop-types';
-import { Plus, TrendingUp, Package, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Plus, TrendingUp, Package, CheckCircle2, AlertTriangle, RefreshCw, WifiOff } from 'lucide-react';
 import { AppShell } from '../../components/common/AppShell';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -39,13 +39,25 @@ KPI.propTypes = { icon: PropTypes.node, label: PropTypes.string, value: PropType
 
 export default function RestaurantDashboard() {
   const { profile } = useAuth();
-  const { listings, loading, refresh } = useFoodListings({ scope: 'mine', restaurantId: profile?.id });
+  const { listings, loading, error: listingsError, refresh } = useFoodListings({ scope: 'mine', restaurantId: profile?.id });
   const [stats, setStats] = useState(null);
+  const [statsError, setStatsError] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
   useEffect(() => {
-    foodService.getStats().then(setStats).catch(() => setStats(null));
-  }, [listings.length]);
+    // Wait for auth profile to be loaded before fetching stats.
+    // Without this guard, the request fires without a Bearer token on
+    // initial load → 401 → sign-out → infinite loading loop.
+    if (!profile?.id) return;
+    foodService.getStats()
+      .then(setStats)
+      .catch((e) => {
+        const msg = e.response?.data?.error || e.message || 'Could not load stats';
+        console.error('[RestaurantDashboard] stats error:', msg);
+        setStatsError(msg);
+        setStats(null);
+      });
+  }, [profile?.id, listings.length]);
 
   const handleCancel = async (id) => {
     setBusyId(id);
@@ -72,8 +84,35 @@ export default function RestaurantDashboard() {
           </h1>
           <p className="text-sm text-gray-500 mt-1">Here&apos;s how your kitchen is helping the city.</p>
         </div>
-        <Link to="/restaurant/post" className="btn-primary"><Plus size={16} /> Post New Food</Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={refresh}
+            disabled={loading}
+            className="btn-secondary text-xs"
+            title="Refresh"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <Link to="/restaurant/post" className="btn-primary"><Plus size={16} /> Post New Food</Link>
+        </div>
       </div>
+
+      {/* Error banner for API failures */}
+      {(listingsError || statsError) && (
+        <div className="mt-4 flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+          <WifiOff size={18} className="shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold">Could not reach the server.</span>
+            <span className="ml-1">{listingsError || statsError}</span>
+            <button
+              onClick={() => { refresh(); setStatsError(null); }}
+              className="ml-2 underline font-medium hover:no-underline"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
         <KPI icon={<TrendingUp size={18} />} label="Meals donated" value={stats?.mealsDonated ?? '—'} hint="lifetime collected meals" color="brand" />

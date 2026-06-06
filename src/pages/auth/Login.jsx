@@ -1,48 +1,67 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Logo } from '../../components/common/Logo';
 import { TestCredentials } from '../../components/common/TestCredentials';
-import { supabase } from '../../lib/supabase';
 
 export default function Login() {
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const { signIn } = useAuth();
+
+  const { signIn, user, role, profile, profileLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const routeError = location.state?.error;
+
+  // Navigate to the dashboard once auth + profile are both ready.
+  // `submitting` is our flag that a login attempt is in progress.
+  useEffect(() => {
+    if (!submitting || profileLoading) return;
+    if (user && role) {
+      const from = location.state?.from?.pathname;
+      const dest = from || (role === 'ngo' ? '/ngo' : role === 'admin' ? '/admin' : '/restaurant');
+      setSubmitting(false);
+      toast.success(`Welcome back, ${profile?.name || form.email}!`);
+      navigate(dest, { replace: true });
+    } else if (user && !role) {
+      // Auth succeeded but profile load failed completely.
+      setSubmitting(false);
+      setError('Your account profile could not be loaded. Please try signing in again.');
+    }
+  }, [submitting, profileLoading, user, role, profile, navigate, location.state, form.email]);
+
+  // Hard safety net: after 12 seconds, stop waiting and show an error.
+  useEffect(() => {
+    if (!submitting) return;
+    const id = setTimeout(() => {
+      setSubmitting(false);
+      setError('Sign-in is taking too long. Please check your connection and try again.');
+    }, 12000);
+    return () => clearTimeout(id);
+  }, [submitting]);
 
   const onChange = (e) => setForm((s) => ({ ...s, [e.target.name]: e.target.value }));
 
   const submit = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+    setSubmitting(true);
     try {
-      const { user, profile } = await signIn(form);
-
-      let role = profile?.role;
-      if (!role) {
-        const { data } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-        role = data?.role;
-      }
-
-      toast.success(`Welcome back, ${profile?.name || form.email}`);
-      const from = location.state?.from?.pathname;
-      const dest =
-        from ||
-        (role === 'ngo' ? '/ngo' : role === 'admin' ? '/admin' : '/restaurant');
-      navigate(dest, { replace: true });
+      await signIn(form);
+      // onAuthStateChange triggers loadProfile → sets role in context.
+      // The useEffect above detects when role is ready and navigates.
     } catch (err) {
+      setSubmitting(false);
       setError(err.message || 'Invalid email or password');
-    } finally {
-      setLoading(false);
     }
   };
+
+  const loading = submitting;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-brand-50 to-white grid lg:grid-cols-2">
@@ -114,6 +133,13 @@ export default function Login() {
               Create an account
             </Link>
           </p>
+
+          {routeError === 'profile_missing' && (
+            <div className="mt-4 text-sm bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3">
+              <span className="font-semibold">Account profile not found.</span>{' '}
+              Your login succeeded but your profile could not be loaded — this can happen on a new device or after an account change. Please sign in again. If the issue persists, contact support.
+            </div>
+          )}
 
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div>

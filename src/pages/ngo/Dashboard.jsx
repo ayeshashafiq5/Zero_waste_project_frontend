@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PropTypes from 'prop-types';
-import { Search, Package, CheckCircle2, MapPin, TrendingUp, RefreshCw } from 'lucide-react';
+import { Search, Package, CheckCircle2, MapPin, TrendingUp, RefreshCw, WifiOff } from 'lucide-react';
 import { AppShell } from '../../components/common/AppShell';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -46,14 +46,26 @@ export default function NGODashboard() {
   const { listings, loading, refresh } = useFoodListings({ scope: 'available' });
   const { location, ready, status: locStatus, accuracy, request: requestLocation } = useLocation({ watch: true });
   const [stats, setStats] = useState(null);
+  const [statsError, setStatsError] = useState(null);
+  const [listError, setListError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
   // NGO-set service radius wins over the platform default (gap L11).
   const radiusKm = profile?.service_radius_km || DEFAULT_RADIUS_KM;
 
   useEffect(() => {
-    ngoService.getStats().then(setStats).catch(() => setStats(null));
-  }, []);
+    // Wait for auth to resolve before fetching stats—prevents sending
+    // requests without a Bearer token on slow networks/initial loads.
+    if (!profile?.id) return;
+    ngoService.getStats()
+      .then(setStats)
+      .catch((e) => {
+        const msg = e.response?.data?.error || e.message || 'Could not load stats';
+        console.error('[NGODashboard] stats error:', msg);
+        setStatsError(msg);
+        setStats(null);
+      });
+  }, [profile?.id]);
 
   // Only compute distances once we have a real fix — otherwise we'd label
   // listings as "0.2 km away" against the Lahore fallback (gap L3).
@@ -68,7 +80,11 @@ export default function NGODashboard() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    setListError(null);
+    setStatsError(null);
     await refresh();
+    // Re-fetch stats too on manual refresh
+    ngoService.getStats().then(setStats).catch((e) => setStatsError(e.message));
     setRefreshing(false);
   };
 
@@ -109,6 +125,23 @@ export default function NGODashboard() {
       </div>
 
       <PushSubscribePanel />
+
+      {/* Error banner for API failures */}
+      {(statsError || listError) && (
+        <div className="mt-4 flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+          <WifiOff size={18} className="shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold">Could not reach the server.</span>
+            <span className="ml-1">{statsError || listError}</span>
+            <button
+              onClick={handleRefresh}
+              className="ml-2 underline font-medium hover:no-underline"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
         <KPI

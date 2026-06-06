@@ -23,10 +23,12 @@ export default {
       keyframes: {
         slideUp: { '0%': { opacity: 0, transform: 'translateY(8px)' }, '100%': { opacity: 1, transform: 'translateY(0)' } },
         ping1: { '0%,100%': { transform: 'scale(1)', opacity: 1 }, '50%': { transform: 'scale(1.6)', opacity: 0 } },
+        bounceSlow: { '0%, 100%': { transform: 'translateY(-20%)', animationTimingFunction: 'cubic-bezier(0.8,0,1,1)' }, '50%': { transform: 'none', animationTimingFunction: 'cubic-bezier(0,0,0.2,1)' } },
       },
       animation: {
         'slide-up': 'slideUp .2s ease-out',
         'ping1': 'ping1 1.6s ease-in-out infinite',
+        'bounce-slow': 'bounceSlow 3s infinite',
       },
     },
   },
